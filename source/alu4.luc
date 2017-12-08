@@ -1,0 +1,63 @@
+module alu4 (
+    input a[4],
+    input b[4],
+    input alufn[6],
+    output out[4],
+    output z,
+    output v,
+    output n,
+    output aOut[4]
+  ) {
+
+  adder4 add;
+  compare4 cmp;
+  shift4 shift;
+  boole4 bool;
+  zvn zvn;
+
+  always {
+    //boolean function
+    bool.a = a;
+    bool.b = b;
+    bool.alufn = alufn;
+
+    //add/sub function
+    add.a = a;
+    add.b = b;
+    add.alufn = alufn;
+
+    zvn.a = a;
+    zvn.b = b;
+    zvn.alufn = alufn;
+    zvn.addOut = add.out;
+
+    z = zvn.z;
+    v = zvn.v;
+    n = zvn.n;
+    aOut = add.out;
+
+    //compare function
+    cmp.z = zvn.z;
+    cmp.v = zvn.v;
+    cmp.n = zvn.n;
+    cmp.alufn = alufn;
+
+    //shift function
+    shift.a = a;
+    shift.b = b;
+    shift.alufn = alufn;
+
+    case(alufn[5:4]) {
+      2b00:
+        out = add.out;
+      2b01:
+        out = bool.out;
+      2b10:
+        out = shift.out;
+      2b11:
+        out = cmp.out;
+      default:
+        out = hFF;
+    }
+  }
+}

@@ -1,0 +1,48 @@
+module button (
+    input clk,  // clock
+    input rst,  // reset
+    input button[3],
+    // input start, (Not implemented)
+    // input restart, (Not implemented)
+    output button_pressed[3]
+    // output start_pressed,
+    // output restart_pressed
+  ) {
+  
+  .clk(clk){
+     button_conditioner button0_cond;
+     edge_detector button0_edge(#RISE(1), #FALL(0));
+    
+     button_conditioner button1_cond;
+     edge_detector button1_edge(#RISE(1), #FALL(0));
+    
+     button_conditioner button2_cond;
+     edge_detector button2_edge(#RISE(1), #FALL(0));
+    
+    // button_conditioner restart_cond;
+     //edge_detector restart_edge(#RISE(1), #FALL(0));
+    
+     //button_conditioner start_cond;
+     //edge_detector start_edge(#RISE(1), #FALL(0));
+     .rst(rst){}
+  }
+
+  always {
+    button0_cond.in = button[0];
+    button0_edge.in = button0_cond.out;
+    button1_cond.in = button[1];
+    button1_edge.in = button1_cond.out;
+    button2_cond.in = button[2];
+    button2_edge.in = button2_cond.out;
+    //restart_cond.in = restart;
+    //restart_edge.in = restart_cond.out;
+    //start_cond.in = start;
+    //start_edge.in = start_cond.out;
+    
+    //start_pressed = start_edge.out;
+    //restart_pressed = restart_edge.out;
+    button_pressed[0] = button0_edge.out;
+    button_pressed[1] = button1_edge.out;
+    button_pressed[2] = button2_edge.out;
+  }
+}

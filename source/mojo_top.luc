@@ -1,0 +1,776 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,      // AVR RX buffer full
+    output io_led [3][8],   // LEDs on IO Shield ( pattern here ) 
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button [5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+
+    //input user_input[3][1]  // user_input only thing we need (FOR NOW BUTTON AS USER input)
+    
+    
+    ) {
+  
+  /* Custom cats here */
+  
+  alu4 alu;                // alu unit for 4 bits
+  //sig led_pattern[3][1];    // LED for 3 items
+  sig rst;                  // reset signal
+  var i;
+  sig emptyArray[3];  // emptyArray
+  sig fullArray[3];
+  const TIMEOUT = 2;
+  
+  
+  /* end of custom sigs and stuff */
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    edge_detector edge_detector (#RISE(1), #FALL(0));
+    
+    
+    
+   .rst(rst) {
+      multi_seven_seg seg;
+      multi_dec_ctr dec_ctr;
+      
+      /* custom */
+      lfsr_randomizer myLFSR;
+      counter ctr (#SIZE(1), #DIV(24));
+      dff led_pattern[3](#INIT(0));   // pattern for LED
+      dff keepScore0[4](#INIT(0));    // 4 bits each 
+      dff keepScore1[4](#INIT(0));
+      dff keepLives[4](#INIT(5));
+      dff getRdmNum[1](#INIT(1));
+      dff initGame[1](#INIT(1));    // small "state" signifying start of game
+      dff buttonArray[3](#INIT(0));
+      
+      
+      button buttons;
+      
+    }
+  }
+  
+  dff glTimeoutCounter[4](#INIT(3), .clk(clk), .rst(rst));    // d flip flop with initial counter at 5
+    
+  .clk(clk){ 	// Overall state
+			.rst(rst){
+				fsm oState = {INITSTATE, CONFIRM, START, WIN, LOSE, WAIT, PROCESS_IN};
+        dff oneSecond[32](#INIT(0));
+			}
+		}
+  
+  always{
+  
+    
+      
+     /* default alu */
+    alu.a = h00; 
+    alu.b = h00;
+    alu.alufn = h00;
+    
+    reset_cond.in = ~rst_n;   // input raw inverted reset signal
+    rst = reset_cond.out;     // conditioned reset
+    
+
+    led = c{3b0, io_button};  // connect buttons to LEDs
+    spi_miso = bz;            // not using SPI
+    spi_channel = bzzzz;      // not using flags
+    avr_rx = bz;              // not using serial port
+    io_seg=8hff;
+    
+    edge_detector.in = ctr.value;
+    dec_ctr.inc = edge_detector.out;
+    seg.values = dec_ctr.digits;
+    
+    io_seg = ~seg.seg; // connect segments to the driver
+    io_sel = ~seg.sel; // connect digit select to the driver
+    io_led = io_dip;   // connect the DIP switches to the LEDs
+    
+    /* initialize 7-seg */
+    //seg.values = {4b00,4b00,4b00,4b00};
+    seg.values = {keepScore1.q[3:0],keepScore0.q[3:0],glTimeoutCounter.q[3:0],keepLives.q[3:0]};
+
+    /* buttons */
+    buttons.button = io_button[2:0];
+  
+     /* randomiser */
+    myLFSR.ctr = ctr.value;
+    
+    led[7:5] = led_pattern.q;
+    
+    /* init user input */
+      if (oState.q!=oState.START){  // Cannot happen at the same time as START, since both using alu
+      oneSecond.d = oneSecond.q + 1;
+      if (oneSecond.q == d50000000){  // every 50MHz - 1 second has passed
+        alu.a = glTimeoutCounter.q;
+        alu.b = 1;
+        alu.alufn = 000001;  // SUB
+        glTimeoutCounter.d = alu.out;
+        oneSecond.d = 32d0;
+        }
+   }
+    
+    
+    
+    for (i = 0; i<3; i++){
+      emptyArray[i] = 0;  // 000
+      fullArray[i] = 1;  // 111
+    }
+    
+    for (i=0;i<3;i++){
+        buttonArray.d[i] = io_button[i];
+        io_led[i][i] = led_pattern.q[i];
+      } 
+    
+    
+    
+    // based on state of overall machine
+    case(oState.q){
+			  oState.INITSTATE:
+          // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+          
+        //keepScore1.d = 1;
+        //keepScore0.d = 9;
+        
+          if (initGame.q == 1){
+            led_pattern.d[0] = 1;
+            led_pattern.d[1] = 1;
+            led_pattern.d[2] = 1;
+            glTimeoutCounter.d = TIMEOUT;
+            initGame.d = 0;
+          }
+          /* wait for input */
+          //if (user_input[2:0] == emptyArray){
+        
+          if (io_button[2:0] == 000){
+            oState.d = oState.INITSTATE;
+          } 
+          else{
+            oState.d = oState.CONFIRM;    
+          }
+        
+			  oState.CONFIRM:
+         // debug
+          for (i=0;i<5;i++){
+            if (i==1){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+         //if (user_input[0] == 1){
+         if (io_button[0] == 1){
+           led_pattern.d[0] = 0;
+           oState.d = oState.CONFIRM;
+         }
+         //if (user_input[1] == 1){ 
+         if (io_button[1]==1){
+           led_pattern.d[1] = 0;
+           oState.d = oState.CONFIRM;
+         }
+        //if (user_input[2] == 1){
+        if (io_button[2] == 1){
+          led_pattern.d[2] = 0;
+          oState.d = oState.CONFIRM;
+          }
+        if (led_pattern.q == 000){
+          /* LEDs are now 000 */
+          /* turn off LEDs, reset user_input */
+          for (i=0;i<3;i++){
+            led_pattern.d[i] = 0;
+            }
+          getRdmNum.d = 1;
+          oState.d = oState.START;
+          }
+          
+			 oState.START:
+        
+        // debug
+          for (i=0;i<5;i++){
+            if (i==2){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+          /* reset timer */
+        glTimeoutCounter.d = TIMEOUT;
+        
+				  /* accept rdm input */
+        if (getRdmNum.q == 1){   // check whether this makes a new pattern appear
+        /* output randomiser here */
+        led_pattern.d[0] = myLFSR.result_3bit[0];
+        led_pattern.d[1] = myLFSR.result_3bit[1];
+        led_pattern.d[2] = myLFSR.result_3bit[2];
+        getRdmNum.d = 0;    // reset to 0
+
+        }
+        /* assign new pattern */
+
+       
+        
+        if (keepLives.q[2:0]<=4b0){  // check lives
+          oState.d = oState.LOSE;
+        }
+         if (keepScore1.q[2:0] == 4d9 & keepScore0.q[2:0] >= 4d8){  // max score 98 for now
+          oState.d = oState.WIN;
+          }
+        else{
+          if (led_pattern.q[2:0] == 000){
+            getRdmNum.d = 1;
+            oState.d = oState.START;
+          }
+          else{
+            // goto WAIT
+            oState.d = oState.WAIT;
+          }
+        
+        }
+				
+			  oState.WIN:
+          
+        // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 0;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+				  /* reset score */
+        keepScore0.d = 4b0;
+        keepScore1.d = 4b0;
+        keepLives.d = 4d5;
+        initGame.d = 1;
+        glTimeoutCounter.d = TIMEOUT;
+        oState.d = oState.INITSTATE;
+				
+			  oState.LOSE:
+      
+        // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+				  /* reset */
+        keepScore0.d = 4b0;
+        keepScore1.d = 4b0;
+        keepLives.d = 4d5;
+        initGame.d = 1;
+        glTimeoutCounter.d = TIMEOUT;
+        oState.d = oState.INITSTATE;
+				
+			  oState.WAIT:
+      
+        // debug
+          for (i=0;i<5;i++){
+            if (i==4){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+				  if (glTimeoutCounter.q <= 0){  // timeout condition
+           if (keepLives.q > 0){
+              keepLives.d = keepLives.q - 1;
+           }
+          getRdmNum.d = 1;
+          oState.d = oState.START;
+          }
+        
+        
+        
+          else if (led_pattern.q[2:0] == 000){  // all buttons pressed condition
+            getRdmNum.d = 1;
+            oState.d = oState.START; 
+          }else
+        
+          /* Lose condition checker -> lives == 0 */
+          if (keepLives.q == 4b0){    
+            oState.d = oState.LOSE;
+          } else
+          //if (user_input != emptyArray){
+          if (io_button[2:0] != 000){
+            /* player has entered input */
+  module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,      // AVR RX buffer full
+    output io_led [3][8],   // LEDs on IO Shield ( pattern here ) 
+    output io_seg [8],      // 7-segment LEDs on IO Shield
+    output io_sel [4],      // Digit select on IO Shield
+    input io_button [5],    // 5 buttons on IO Shield
+    input io_dip [3][8]     // DIP switches on IO Shield
+
+    //input user_input[3][1]  // user_input only thing we need (FOR NOW BUTTON AS USER input)
+    
+    
+    ) {
+  
+  /* Custom cats here */
+  
+  alu4 alu;                // alu unit for 4 bits
+  //sig led_pattern[3][1];    // LED for 3 items
+  sig rst;                  // reset signal
+  var i;
+  sig emptyArray[3];  // emptyArray
+  sig fullArray[3];
+  const TIMEOUT = 2;
+  
+  
+  /* end of custom sigs and stuff */
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    edge_detector edge_detector (#RISE(1), #FALL(0));
+    
+    
+    
+   .rst(rst) {
+      multi_seven_seg seg;
+      multi_dec_ctr dec_ctr;
+      
+      /* custom */
+      lfsr_randomizer myLFSR;
+      counter ctr (#SIZE(1), #DIV(24));
+      dff led_pattern[3](#INIT(0));   // pattern for LED
+      dff keepScore0[4](#INIT(0));    // 4 bits each 
+      dff keepScore1[4](#INIT(0));
+      dff keepLives[4](#INIT(5));
+      dff getRdmNum[1](#INIT(1));
+      dff initGame[1](#INIT(1));    // small "state" signifying start of game
+      dff buttonArray[3](#INIT(0));
+      
+      
+      button buttons;
+      
+    }
+  }
+  
+  dff glTimeoutCounter[4](#INIT(3), .clk(clk), .rst(rst));    // d flip flop with initial counter at 5
+    
+  .clk(clk){ 	// Overall state
+			.rst(rst){
+				fsm oState = {INITSTATE, CONFIRM, START, WIN, LOSE, WAIT, PROCESS_IN};
+        dff oneSecond[32](#INIT(0));
+			}
+		}
+  
+  always{
+  
+    
+      
+     /* default alu */
+    alu.a = h00; 
+    alu.b = h00;
+    alu.alufn = h00;
+    
+    reset_cond.in = ~rst_n;   // input raw inverted reset signal
+    rst = reset_cond.out;     // conditioned reset
+    
+
+    led = c{3b0, io_button};  // connect buttons to LEDs
+    spi_miso = bz;            // not using SPI
+    spi_channel = bzzzz;      // not using flags
+    avr_rx = bz;              // not using serial port
+    io_seg=8hff;
+    
+    edge_detector.in = ctr.value;
+    dec_ctr.inc = edge_detector.out;
+    seg.values = dec_ctr.digits;
+    
+    io_seg = ~seg.seg; // connect segments to the driver
+    io_sel = ~seg.sel; // connect digit select to the driver
+    io_led = io_dip;   // connect the DIP switches to the LEDs
+    
+    /* initialize 7-seg */
+    //seg.values = {4b00,4b00,4b00,4b00};
+    seg.values = {keepScore1.q[3:0],keepScore0.q[3:0],glTimeoutCounter.q[3:0],keepLives.q[3:0]};
+
+    /* buttons */
+    buttons.button = io_button[2:0];
+  
+     /* randomiser */
+    myLFSR.ctr = ctr.value;
+    
+    led[7:5] = led_pattern.q;
+    
+    /* init user input */
+      if (oState.q!=oState.START){  // Cannot happen at the same time as START, since both using alu
+      oneSecond.d = oneSecond.q + 1;
+      if (oneSecond.q == d50000000){  // every 50MHz - 1 second has passed
+        alu.a = glTimeoutCounter.q;
+        alu.b = 1;
+        alu.alufn = 000001;  // SUB
+        glTimeoutCounter.d = alu.out;
+        oneSecond.d = 32d0;
+        }
+   }
+    
+    
+    
+    for (i = 0; i<3; i++){
+      emptyArray[i] = 0;  // 000
+      fullArray[i] = 1;  // 111
+    }
+    
+    for (i=0;i<3;i++){
+        buttonArray.d[i] = io_button[i];
+        io_led[i][i] = led_pattern.q[i];
+      } 
+    
+    
+    
+    // based on state of overall machine
+    case(oState.q){
+			  oState.INITSTATE:
+          // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+          
+        //keepScore1.d = 1;
+        //keepScore0.d = 9;
+        
+          if (initGame.q == 1){
+            led_pattern.d[0] = 1;
+            led_pattern.d[1] = 1;
+            led_pattern.d[2] = 1;
+            glTimeoutCounter.d = TIMEOUT;
+            initGame.d = 0;
+          }
+          /* wait for input */
+          //if (user_input[2:0] == emptyArray){
+        
+          if (io_button[2:0] == 000){
+            oState.d = oState.INITSTATE;
+          } 
+          else{
+            oState.d = oState.CONFIRM;    
+          }
+        
+			  oState.CONFIRM:
+         // debug
+          for (i=0;i<5;i++){
+            if (i==1){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+         //if (user_input[0] == 1){
+         if (io_button[0] == 1){
+           led_pattern.d[0] = 0;
+           oState.d = oState.CONFIRM;
+         }
+         //if (user_input[1] == 1){ 
+         if (io_button[1]==1){
+           led_pattern.d[1] = 0;
+           oState.d = oState.CONFIRM;
+         }
+        //if (user_input[2] == 1){
+        if (io_button[2] == 1){
+          led_pattern.d[2] = 0;
+          oState.d = oState.CONFIRM;
+          }
+        if (led_pattern.q == 000){
+          /* LEDs are now 000 */
+          /* turn off LEDs, reset user_input */
+          for (i=0;i<3;i++){
+            led_pattern.d[i] = 0;
+            }
+          getRdmNum.d = 1;
+          oState.d = oState.START;
+          }
+          
+			 oState.START:
+        
+        // debug
+          for (i=0;i<5;i++){
+            if (i==2){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+        
+          /* reset timer */
+        glTimeoutCounter.d = TIMEOUT;
+        
+				  /* accept rdm input */
+        if (getRdmNum.q == 1){   // check whether this makes a new pattern appear
+        /* output randomiser here */
+        led_pattern.d[0] = myLFSR.result_3bit[0];
+        led_pattern.d[1] = myLFSR.result_3bit[1];
+        led_pattern.d[2] = myLFSR.result_3bit[2];
+        getRdmNum.d = 0;    // reset to 0
+
+        }
+        /* assign new pattern */
+
+        alu.a = keepLives.q[2:0];
+        alu.b = 0000;
+        alu.alufn = 011110;   // OR
+        
+        if (alu.out!=4b0){  // check lives
+          oState.d = oState.LOSE;
+        }
+         if (keepScore1.q[2:0] == 4d9 & keepScore0.q[2:0] >= 4d8){  // max score 98 for now
+          oState.d = oState.WIN;
+          }
+        else{
+          if (led_pattern.q[2:0] == 000){
+            getRdmNum.d = 1;
+            oState.d = oState.START;
+          }
+          else{
+            // goto WAIT
+            oState.d = oState.WAIT;
+          }
+        
+        }
+				
+			  oState.WIN:
+          
+        // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 0;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+				  /* reset score */
+        keepScore0.d = 4b0;
+        keepScore1.d = 4b0;
+        keepLives.d = 4d5;
+        initGame.d = 1;
+        glTimeoutCounter.d = TIMEOUT;
+        oState.d = oState.INITSTATE;
+				
+			  oState.LOSE:
+      
+        // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+				  /* reset */
+        keepScore0.d = 4b0;
+        keepScore1.d = 4b0;
+        keepLives.d = 4d5;
+        initGame.d = 1;
+        glTimeoutCounter.d = TIMEOUT;
+        oState.d = oState.INITSTATE;
+				
+			  oState.WAIT:
+      
+        // debug
+          for (i=0;i<5;i++){
+            if (i==4){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+				  if (glTimeoutCounter.q <= 0){  // timeout condition
+           if (keepLives.q > 0){
+              keepLives.d = keepLives.q - 1;
+           }
+          getRdmNum.d = 1;
+          oState.d = oState.START;
+          }
+        
+        
+        
+          else if (led_pattern.q[2:0] == 000){  // all buttons pressed condition
+            getRdmNum.d = 1;
+            oState.d = oState.START; 
+          }else
+        
+          /* Lose condition checker -> lives == 0 */
+          if (keepLives.q == 4b0){    
+            oState.d = oState.LOSE;
+          } else
+          //if (user_input != emptyArray){
+          if (io_button[2:0] != 000){
+            /* player has entered input */
+              oState.d = oState.PROCESS_IN;
+            }
+          else{    // timer more than 0
+            /* Wait...*/
+            oState.d = oState.WAIT;
+            }
+				
+			  oState.PROCESS_IN:
+      
+        // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+        for (i=0;i<3;i++){
+          if (buttons.button_pressed[i] == 1){  // only does check if input is 1
+            if (led_pattern.q[i] == 1){  // correct input found
+              led_pattern.d[i] = 0;  // set the led_pattern to 0
+              /* increment score by 1 */
+              if (keepScore0.q==9){
+                keepScore1.d = keepScore1.q + 1;
+                keepScore0.d = 4b0;  
+              }
+              else{
+                keepScore0.d = keepScore0.q + 1;
+              }
+              
+            }
+            /* wrong input by user */
+            if (led_pattern.q[i] == 0){
+              if (keepLives.q > 0){
+                keepLives.d = keepLives.q - 1;
+              }
+              
+            }          
+          }
+        }
+         /* compare lives to determine lose */       
+                    
+        if (keepLives.q<=0){
+          oState.d = oState.LOSE;
+          }
+        else{
+        /* goes to wait to let it check */
+          oState.d = oState.WAIT;  
+        }
+    }
+  }
+  
+  
+     
+  
+}            oState.d = oState.PROCESS_IN;
+            }
+          else{    // timer more than 0
+            /* Wait...*/
+            oState.d = oState.WAIT;
+            }
+				
+			  oState.PROCESS_IN:
+      
+        // debug
+          for (i=0;i<5;i++){
+            if (i==0){
+              led[i] = 1;
+            }else{
+            led[i] = 0;
+          }
+            
+          }
+        
+        for (i=0;i<3;i++){
+          if (buttons.button_pressed[i] == 1){  // only does check if input is 1
+            if (led_pattern.q[i] == 1){  // correct input found
+              led_pattern.d[i] = 0;  // set the led_pattern to 0
+              /* increment score by 1 */
+              if (keepScore0.q==9){
+                keepScore1.d = keepScore1.q + 1;
+                keepScore0.d = 4b0;  
+              }
+              else{
+                keepScore0.d = keepScore0.q + 1;
+              }
+              
+            }
+            /* wrong input by user */
+            if (led_pattern.q[i] == 0){
+              if (keepLives.q > 0){
+                keepLives.d = keepLives.q - 1;
+              }
+              
+            }          
+          }
+        }
+         /* compare lives to determine lose */       
+                    
+        if (keepLives.q<=0){
+          oState.d = oState.LOSE;
+          }
+        else{
+        /* goes to wait to let it check */
+          oState.d = oState.WAIT;  
+        }
+    }
+  }
+  
+  
+     
+  
+}

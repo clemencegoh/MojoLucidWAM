@@ -1,0 +1,22 @@
+module adder4 (
+    input a[4],
+    input b[4],
+    input alufn[6],
+    output out[4]
+  ) {
+
+  always {
+    case(alufn[1:0]) {
+      2b00:
+        out = a + b;
+      2b01:
+        out = a - b;
+      2b10:
+        out = a * b;
+      2b11:
+        out = a - b;  //used by CMP module where alufn[1:0] is 01 or 11
+      default:
+        out = 0;
+    }
+  }
+}

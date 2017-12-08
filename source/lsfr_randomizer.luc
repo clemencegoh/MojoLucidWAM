@@ -1,0 +1,18 @@
+module lfsr_randomizer (
+    input clk,  // clock
+    input rst,  // reset  
+    input ctr,
+    output result_3bit[3]
+  ) {
+  
+  dff count[3](.clk(ctr),.rst(rst));
+  
+  always {    
+    result_3bit[0] = count.q[0];
+    count.d[1] = count.q[0];
+    result_3bit[1] = count.q[1];
+    count.d[2] = count.q[1];
+    result_3bit[2] = count.q[2];
+    count.d[0] = count.q[1] ~^ count.q[2];
+  }
+}
